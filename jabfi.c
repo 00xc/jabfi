@@ -54,7 +54,7 @@ void run_main_loop(program_t* program, tape_t* tape) {
 
 /* Called upon reading a `[` instruction */
 void run_loop(program_t* program, tape_t* tape) {
-	register char c = program->code[program->pos];
+	register char c;
 	program_pos_t loop_beginning = program->pos;
 
 	if (tape->memory[tape->pos] == 0) {
@@ -72,14 +72,16 @@ void run_loop(program_t* program, tape_t* tape) {
 	} else {
 
 		/* Loop until counter is zero, while we are not at EOF */
-		while (tape->memory[tape->pos] != 0 && c != 0) {
+		do {
 			program->pos = loop_beginning;
 			while ( (c = PROGRAM_NEXT(program)) != 0 ) {
-				if (run_instruction(program, tape, c) == LOOP_DONE) {
+				if (run_instruction(program, tape, c) == LOOP_DONE){
 					break;
 				}
 			}
-		}
+
+		} while (tape->memory[tape->pos] != 0 && c != 0);
+
 	}
 
 	/* If we reached EOF during a loop there was an error */
@@ -158,12 +160,14 @@ int main(int argc, const char* argv[]) {
 	};
 	if (program.code == NULL) {
 		fclose(fp);
-		perror("malloc");
+		perror("calloc");
 	}
 
 	/* Load program */
 	if (fread(program.code, sizeof(char), file_size, fp) != (file_size * sizeof(char))) {
 		fprintf(stderr, "Error: could not read program %s.\n", argv[1]);
+		free(program.code);
+		fclose(fp);
 		exit(1);
 	}
 	fclose(fp);
