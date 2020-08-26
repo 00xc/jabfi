@@ -2,6 +2,7 @@ import os
 import sys
 import subprocess
 import shlex
+import time
 
 from collections import namedtuple
 
@@ -24,8 +25,8 @@ if __name__ == "__main__":
 		"h.b": TestResult(None, "H", ""),
 		"pound_symbol.b": TestResult(None, "#", ""),
 		"squares.b": TestResult(None, "\n".join(map(str, all_squares())), ""),
-		"unmatched1.b": TestResult(None, "#", "Error: found ] @ 26 with unmatched [."),
-		"unmatched2.b": TestResult(None, "#", "Error: found [ @ 26 with unmatched ]."),
+		"unmatched1.b": TestResult(None, "#", "Error: found ] @ 14 with unmatched [."),
+		"unmatched2.b": TestResult(None, "#", "Error: found [ @ 14 with unmatched ]."),
 		"collatz.b": TestResult(b"5492280743\x0d\x0a\x00", "403", "")
 	}
 
@@ -36,7 +37,6 @@ if __name__ == "__main__":
 	# Retrieve binary
 	upper_directory = os.path.dirname(current_directory)
 	binary = os.path.join(upper_directory, "jabfi")
-
 
 	print("[*] Running {} tests".format(len(files)))
 	print("-"*60)
@@ -51,13 +51,15 @@ if __name__ == "__main__":
 			continue
 		expected_test = tests[filename]
 
+		t0 = time.perf_counter()
 		res = subprocess.run(shlex.split("{} {}".format(binary, file)), input=expected_test.stdin , stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+		elapsed = time.perf_counter() - t0
 
 		# Collect test outputs
 		stdout = res.stdout.decode().rstrip()
 		stderr = res.stderr.decode().rstrip()
 
 		if stdout == expected_test.stdout and stderr == expected_test.stderr:
-			print("[+]", file, ": TEST OK")
+			print("[+]", file, ": TEST OK ({} ms)".format(round(elapsed*1000, 3)))
 		else:
 			print("[-]", file, ": TEST FAILED")

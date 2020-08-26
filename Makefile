@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-std=c99 -Wall -O3 -ffast-math
+CFLAGS=-std=c99 -Wall -O3 -ffast-math -pedantic
 
 jabfi: jabfi.c
 	$(CC) $< $(CFLAGS) -o $@
