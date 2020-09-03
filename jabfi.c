@@ -17,7 +17,7 @@ typedef struct { instruction_t* code; program_pos_t pos; } program_t;
 #define PROGRAM_NEXT(program)	program->code[program->pos++]
 
 /* A tape has memory cells and a pointer */
-typedef uint_fast8_t cell_t;
+typedef unsigned char cell_t;
 typedef uint_fast16_t tape_pos_t;
 typedef struct { cell_t memory[MEM_SIZE]; tape_pos_t pos; } tape_t;
 
@@ -53,15 +53,52 @@ inline void bf_accumulate_instructions(char* input, unsigned int* i, instruction
 	while (input[++(*i)] == current) {
 		;;
 	}
-	output[(*j)++] = (instruction_t) {op, --(*i) - aux + 1};
+	output[(*j)++] = (instruction_t) { .operator = op, .operand = --(*i) - aux + 1 };
+}
+
+int count_str(char c, const char* haystack, char sentinel) {
+
+	if (strchr(haystack, sentinel) == NULL)
+		return -1;
+
+	int i;
+	for (i=0; haystack[i] != sentinel; haystack[i]==c ? i++ : *haystack++);
+	return i;
+}
+
+char is_monoinstruction_loop(const char* input, int i) {
+	const char* ops = "+-<>,.[]";
+
+	char arithmetic_ops[256];
+	memset(arithmetic_ops, 0, 256);
+	arithmetic_ops['+'] = arithmetic_ops['-'] = arithmetic_ops['<'] = arithmetic_ops['>'] = 1;
+
+	char found = 0;
+	int res;
+
+	for (int j=0; j<strlen(ops); ++j) {
+		res = count_str(ops[j], input+i+1, ']');
+		if (res != 0) {
+			if (found == 0) found = ops[j];
+			else return 0;
+		}
+	}
+
+	/* Si es OP aritm */
+	if (arithmetic_ops[(int)found])
+		return found;
+	else
+		return 0;
 }
 
 /* Compile an array of characters into an array of instruction_t */
 void bf_compile(char* input, size_t size, instruction_t* output) {
 	unsigned int i = -1, j = 0;
+	char c;
 
-	char optimized_loop_lookup[256];
-	optimized_loop_lookup['-'] = optimized_loop_lookup['+'] = optimized_loop_lookup['<'] = optimized_loop_lookup['>'] = 1;
+	char clear_loop_ops[256];
+	memset(clear_loop_ops, 0, 256);
+	clear_loop_ops['-'] = clear_loop_ops['+'] = 1;
 
 	while (++i < size) {
 		switch (input[i]) {
@@ -69,31 +106,39 @@ void bf_compile(char* input, size_t size, instruction_t* output) {
 			case '-': bf_accumulate_instructions(input, &i, output, &j, OP_DEL); break;
 			case '>': bf_accumulate_instructions(input, &i, output, &j, OP_RIGHT); break;
 			case '<': bf_accumulate_instructions(input, &i, output, &j, OP_LEFT); break;
-			case '.': output[j++] = (instruction_t) {OP_OUT, 0}; break;
-			case ',': output[j++] = (instruction_t) {OP_IN, 0}; break;
+			case '.': output[j++] = (instruction_t) { .operator = OP_OUT, .operand = 0 }; break;
+			case ',': output[j++] = (instruction_t) { .operator = OP_IN, .operand = 0 }; break;
 			case '[':
 
-				if ( (input[i+2] == ']') && optimized_loop_lookup[(int)input[i+1]]) {
+				if ( (input[i+2] == ']') && clear_loop_ops[(int)input[i+1]]) {
 
-					/* Simple loop */
-					switch (input[i+1]) {
-						case '-': output[j++] = (instruction_t) {OP_CLEAR, 0}; i+=2; break;
-						case '+': output[j++] = (instruction_t) {OP_CLEAR, 0}; i+=2; break;
-						case '<': output[j++] = (instruction_t) {OP_LEFT_U0, 0}; i+=2; break;
-						case '>': output[j++] = (instruction_t) {OP_RIGHT_U0, 0}; i+=2; break;
+					/* Optimized loop: clear cell */
+					output[j++] = (instruction_t) { .operator = OP_CLEAR, .operand = 0 }; i+=2; break;
+
+				} else if ( (c = is_monoinstruction_loop(input, i)) != 0 && (c=='<' || c=='>') ) {
+
+					/* Optimized loop: move pointer until zero */
+					{
+						int num = count_str(c, input+i, ']');
+
+						switch(c) {
+							case '<': output[j++] = (instruction_t) { .operator = OP_LEFT_U0, .operand = num }; i+=(num+1); break;
+							case '>': output[j++] = (instruction_t) { .operator = OP_RIGHT_U0, .operand = num }; i+=(num+1); break;
+						}
 					}
+
 
 				} else {
 					/* Regular loop */
-					output[j++] = (instruction_t) {OP_LOOP_BEGIN, 0};
+					output[j++] = (instruction_t) { .operator = OP_LOOP_BEGIN, .operand = 0 };
 				}
 
 				break;
 				
-			case ']': output[j++] = (instruction_t) {OP_LOOP_END, 0}; break;
+			case ']': output[j++] = (instruction_t) { .operator = OP_LOOP_END, .operand = 0 }; break;
 		}
 	}
-	output[j] = (instruction_t) {OP_END, 0};
+	output[j] = (instruction_t) { .operator = OP_END, .operand = 0 };
 }
 
 /* Top level instruction loop */
@@ -157,19 +202,32 @@ int bf_run_instruction(instruction_t* instruction, program_t* program, tape_t* t
 		case OP_CLEAR: tape->memory[tape->pos] = 0; break;
 		case OP_RIGHT: tape->pos += instruction->operand; break;
 		case OP_LEFT: tape->pos -= instruction->operand; break;
-		case OP_RIGHT_U0: while (tape->memory[tape->pos]) ++(tape->pos); break;
-		case OP_LEFT_U0: while (tape->memory[tape->pos]) --(tape->pos); break;
+		case OP_RIGHT_U0: while (tape->memory[tape->pos]) (tape->pos) += instruction->operand; break;
+		case OP_LEFT_U0: while (tape->memory[tape->pos]) (tape->pos) -= instruction->operand; break;
 		case OP_IN: tape->memory[tape->pos] = (cell_t) getchar(); break;
-		case OP_OUT:
-			putchar(tape->memory[tape->pos]);
-			fflush(stdout);
-			break;
+		case OP_OUT: putchar(tape->memory[tape->pos]); fflush(stdout); break;
 		case OP_LOOP_BEGIN: bf_run_loop(program, tape); break;
 		case OP_LOOP_END: return EXEC_LOOP_DONE;
 		default: return EXEC_UNKNOWN;
 	}
 
 	return EXEC_OK;
+}
+
+void bf_filter(char* input) {
+	char* src;
+	char* dst;
+
+	char ops[256];
+	memset(ops, 0, 256*sizeof(char));
+	ops['.'] = ops[','] = ops['+'] = ops['-'] = ops['<'] = ops['>'] = ops['['] = ops[']'] = 1;
+
+	for (src=input, dst=input; *src; src++) {
+		if (ops[(int)*src]) {
+			*dst++ = *src;
+		}
+	}
+	*dst = 0;
 }
 
 int main(int argc, char const *argv[]) {
@@ -216,8 +274,9 @@ int main(int argc, char const *argv[]) {
 		exit(1);
 	}
 
-	/* Compile program */
-	bf_compile(program, file_size, compiled_program.code);
+	/* Filter input characters and compile program */
+	bf_filter(program);
+	bf_compile(program, strlen(program), compiled_program.code);
 	free(program);
 
 	/* Init memory */

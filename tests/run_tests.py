@@ -27,7 +27,8 @@ if __name__ == "__main__":
 		"squares.b": TestResult(None, "\n".join(map(str, all_squares())), ""),
 		"unmatched1.b": TestResult(None, "#", "Error: found ] @ 14 with unmatched [."),
 		"unmatched2.b": TestResult(None, "#", "Error: found [ @ 14 with unmatched ]."),
-		"collatz.b": TestResult(b"5492280743\x0d\x0a\x00", "403", "")
+		"collatz.b": TestResult(b"5492280743\x0d\x0a4068834\x0d\x0a\x00", "403\n253", ""),
+		"rot13.b": TestResult(b"~mlk zyx\x00", "~zyx mlk", "")
 	}
 
 	# Retrieve test programs
@@ -41,7 +42,6 @@ if __name__ == "__main__":
 	print("[*] Running {} tests".format(len(files)))
 	print("-"*60)
 
-	# Run tests
 	for file in files:
 
 		filename = os.path.basename(file)
@@ -49,17 +49,18 @@ if __name__ == "__main__":
 		if filename not in tests:
 			print("WARNING: test for file '{}' not found".format(filename), file=sys.stderr)
 			continue
-		expected_test = tests[filename]
+		current_test = tests[filename]
 
+		# Run test
 		t0 = time.perf_counter()
-		res = subprocess.run(shlex.split("{} {}".format(binary, file)), input=expected_test.stdin , stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+		res = subprocess.run(shlex.split("{} {}".format(binary, file)), input=current_test.stdin , stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=3)
 		elapsed = time.perf_counter() - t0
 
 		# Collect test outputs
 		stdout = res.stdout.decode().rstrip()
 		stderr = res.stderr.decode().rstrip()
 
-		if stdout == expected_test.stdout and stderr == expected_test.stderr:
+		if stdout == current_test.stdout and stderr == current_test.stderr:
 			print("[+]", file, ": TEST OK ({} ms)".format(round(elapsed*1000, 3)))
 		else:
 			print("[-]", file, ": TEST FAILED")
