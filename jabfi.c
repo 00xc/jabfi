@@ -1,7 +1,7 @@
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdint.h>
 
 #define MEM_SIZE		(2<<15)
 
@@ -22,11 +22,7 @@ typedef uint16_t tape_pos_t;
 typedef struct { cell_t memory[MEM_SIZE]; tape_pos_t pos; } tape_t;
 
 /* Values returned by `bf_run_instruction` */
-enum exec_status {
-	EXEC_OK,
-	EXEC_LOOP_DONE,
-	EXEC_UNKNOWN
-};
+enum exec_status { EXEC_OK, EXEC_LOOP_DONE, EXEC_UNKNOWN };
 
 /* Declare several functions that need to know about each other */
 uint_fast8_t bf_run_instruction(const instruction_t*, program_t*, tape_t*);
@@ -60,9 +56,10 @@ int count_str(char c, const char* haystack, char sentinel) {
 }
 
 /*
- * Returns 1 on loops that have one unique instruction, 0 otherwise.
+ * Returns 0 on loops that have more than one unique instruction.
+ * Returns that single instruction character otherwise.
  * Expects the input pointer to be past the initial `[`.
- * [>>>>>] -> 1
+ * [>>>>>] -> '>'
  * [+<<<-] -> 0
  */
 char is_monoinstruction_loop(const char* input, unsigned int i) {
