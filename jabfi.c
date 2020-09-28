@@ -29,26 +29,26 @@ enum exec_status {
 };
 
 /* Declare several functions that need to know about each other */
-uint_fast8_t bf_run_instruction(const instruction_t* instruction, program_t* program, tape_t* tape);
-void bf_run_loop(program_t* program, tape_t* tape);
+uint_fast8_t bf_run_instruction(const instruction_t*, program_t*, tape_t*);
+void bf_run_loop(program_t*, tape_t*);
 
 /*
  * Translates a series of identical instructions into one:
- * `++++` -> (OP_SUM, 4)
- *  `>>`  -> (OP_RIGHT, 2)
+ * `++++` -> (OP_ADD, 4)
+ *  `<<`  -> (OP_MOVE, -2)
  */
 inline void bf_accumulate_instructions(const char* input, unsigned int* i, instruction_t* output, unsigned int* j, operator_t op, int sign) {
 	char current = input[*i];
-	unsigned int aux = *i;
+	unsigned int start_pos = *i;
 
 	while (input[++(*i)] == current) {
-		;;
+		continue;
 	}
 
-	output[(*j)++] = (instruction_t) { .op = op, .val = (--(*i) - aux + 1) * sign };
+	output[(*j)++] = (instruction_t) { .op = op, .val = (--(*i) - start_pos + 1) * sign };
 }
 
-/* Counts the number of occurences of `c` in `haystack` until the end of string or reaching `sentinel` */
+/* Counts the number of occurences of `c` in `haystack` until the end of the string or reaching `sentinel` */
 int count_str(char c, const char* haystack, char sentinel) {
 
 	if (strchr(haystack, sentinel) == NULL)
@@ -89,13 +89,9 @@ char is_monoinstruction_loop(const char* input, unsigned int i) {
 }
 
 /* Compile an array of characters into an array of instruction_t */
-void bf_compile(char* input, instruction_t* output) {
+void bf_compile(const char* input, instruction_t* output) {
 	unsigned int i = -1, j = 0;
 	char c;
-
-	char clear_loop_ops[256];
-	memset(clear_loop_ops, 0, 256);
-	clear_loop_ops['-'] = clear_loop_ops['+'] = 1;
 
 	/* Main IR compilation loop */
 	while (input[++i]) {
@@ -104,59 +100,57 @@ void bf_compile(char* input, instruction_t* output) {
 			case '+': bf_accumulate_instructions(input, &i, output, &j, OP_ADD, 1); break;
 			case '<': bf_accumulate_instructions(input, &i, output, &j, OP_MOVE, -1); break;
 			case '>': bf_accumulate_instructions(input, &i, output, &j, OP_MOVE, 1); break;
-			case '.': output[j++] = (instruction_t) { .op = OP_OUT, .val = 0 }; break;
-			case ',': output[j++] = (instruction_t) { .op = OP_IN, .val = 0 }; break;
-			case ']': output[j++] = (instruction_t) { .op = OP_LOOP_END, .val = 0 }; break;
+			case '.': output[j++] = (instruction_t) { .op = OP_OUT }; break;
+			case ',': output[j++] = (instruction_t) { .op = OP_IN }; break;
+			case ']': output[j++] = (instruction_t) { .op = OP_LOOP_END }; break;
 			case '[':
+				if ( input[i+2] == ']' && (input[i+1] == '-' || input[i+1] == '+')) {
 
-				if ( (input[i+2] == ']') && clear_loop_ops[(int)input[i+1]]) {
-
-					/* Optimized loop: clear cell */
-					output[j++] = (instruction_t) { .op = OP_CLEAR, .val = 0 }; i+=2; break;
+					/* Optimized loop: clear cell ([-] or [+]) */
+					output[j++] = (instruction_t) { .op = OP_CLEAR }; i+=2; break;
 
 				} else if ( (c = is_monoinstruction_loop(input, i)) != 0 && (c=='<' || c=='>') ) {
 
 					/* Optimized loop: move pointer until zero */
-					{
-						unsigned int num = count_str(c, input+i, ']');
-						switch(c) {
-							case '<': output[j++] = (instruction_t) { .op = OP_LEFT_U0,  .val = num }; i+=(num+1); break;
-							case '>': output[j++] = (instruction_t) { .op = OP_RIGHT_U0, .val = num }; i+=(num+1); break;
-						}
+					unsigned int num = count_str(c, input+i, ']');
+					switch(c) {
+						case '<': output[j++] = (instruction_t) { .op = OP_LEFT_U0,  .val = num }; i += (num+1); break;
+						case '>': output[j++] = (instruction_t) { .op = OP_RIGHT_U0, .val = num }; i += (num+1); break;
 					}
 
 				} else {
 
 					/* Regular loop */
-					output[j++] = (instruction_t) { .op = OP_LOOP_BEGIN, .val = 0 };
+					output[j++] = (instruction_t) { .op = OP_LOOP_BEGIN };
 				}
 
 				break;
 		}
 	}
-	output[j] = (instruction_t) { .op = OP_END, .val = 0 };
+	output[j++] = (instruction_t) { .op = OP_END };
 
-	/* Translate an `OP_MOVE, OP_X` into a single `OP_X` with a move parameter */
+	/* Translate an `OP_MOVE, OP_X` sequence into a single `OP_X` with a move */
 	i = j = 0;
+	instruction_t* next;
 	do {
-		if (output[i].op == OP_MOVE && output[i+1].op != OP_LOOP_BEGIN && output[i+1].op != OP_LOOP_END ) {
-			output[j++] = (instruction_t) { .op = output[i+1].op, .val = output[i+1].val, .mov = output[i].val };
-			++i;
+		next = output + i + 1;
+		if ( output[i].op == OP_MOVE && next->op != OP_END ) {
+			output[j].mov = output[i++].val;
+			output[j].op = next->op;
+			output[j].val = next->val;
+			++j;
 		} else {
 			output[j++] = output[i];
-			output[j].mov = 0;
 		}
 
-		++i;
-
-	} while (output[i-1].op != OP_END);
+	} while (output[i++].op != OP_END);
 }
 
 /* Top level instruction loop */
 void bf_run_main_loop(program_t* program, tape_t* tape) {
 	instruction_t instruction;
 
-	while ( (instruction = PROGRAM_NEXT(program)).op != OP_END) {
+	while ( (instruction = PROGRAM_NEXT(program)).op != OP_END ) {
 		if (bf_run_instruction(&instruction, program, tape) == EXEC_LOOP_DONE) {
 			fprintf(stderr, "Error: found ] @ %ld with unmatched [.\n", program->pos);
 			free(program->code);
@@ -170,14 +164,28 @@ inline void bf_run_loop(program_t* program, tape_t* tape) {
 	register instruction_t instruction;
 	program_pos_t loop_beginning = program->pos;
 
-	if (tape->memory[tape->pos] == 0) {
+	if (tape->memory[tape->pos] != 0) {
 
-		/* Skip to matching ], while we are not at EOF */
+		/* Loop until counter is zero, while we are not at EOF */
+		do {
+			/* Reset the program pointer */
+			program->pos = loop_beginning;
+
+			/* Run the loop once */
+			while ( (instruction = PROGRAM_NEXT(program)).op != OP_END) {
+				if (bf_run_instruction(&( (instruction_t) {instruction.op, instruction.val, instruction.mov} ), program, tape) == EXEC_LOOP_DONE)
+					break;
+			}
+
+		} while (tape->memory[tape->pos] != 0 && instruction.op != OP_END);
+
+	} else {
+
+		/* Skip to matching OP_LOOP_END, while we are not at EOF */
 		register int_fast16_t loop = 1;
 
 		do {
-			instruction = PROGRAM_NEXT(program);
-			switch(instruction.op) {
+			switch ( (instruction = PROGRAM_NEXT(program)).op ) {
 				case OP_LOOP_END: --loop; break;
 				case OP_LOOP_BEGIN: ++loop; break;
 				case OP_END: loop = 0; break;
@@ -185,22 +193,9 @@ inline void bf_run_loop(program_t* program, tape_t* tape) {
 			}
 		} while (loop != 0);
 
-	} else {
-
-		/* Loop until counter is zero, while we are not at EOF */
-		do {
-			/* Reset the pointer */
-			program->pos = loop_beginning;
-
-			/* Run the loop once */
-			while ( (instruction = PROGRAM_NEXT(program)).op != OP_LOOP_END && instruction.op != OP_END) {
-				bf_run_instruction(&( (instruction_t) {instruction.op, instruction.val, instruction.mov} ), program, tape);
-			}
-
-		} while (tape->memory[tape->pos] != 0 && instruction.op != OP_END);
 	}
 
-	/* If we reached EOF during a loop there was an error */
+	/* If we reached EOF during a loop, there was an error */
 	if (instruction.op == OP_END) {
 		fprintf(stderr, "Error: found [ @ %ld with unmatched ].\n", loop_beginning);
 		free(program->code);
@@ -215,12 +210,12 @@ uint_fast8_t bf_run_instruction(const instruction_t* instruction, program_t* pro
 		case OP_ADD: tape->memory[tape->pos += instruction->mov] += instruction->val; break;
 		case OP_MOVE: tape->pos += instruction->val; break;
 		case OP_CLEAR: tape->memory[tape->pos += instruction->mov] = 0; break;
-		case OP_RIGHT_U0: tape->pos+=instruction->mov; while (tape->memory[tape->pos]) (tape->pos) += instruction->val; break;
-		case OP_LEFT_U0: tape->pos+=instruction->mov; while (tape->memory[tape->pos]) (tape->pos) -= instruction->val; break;
+		case OP_RIGHT_U0: tape->pos += instruction->mov; while (tape->memory[tape->pos]) (tape->pos) += instruction->val; break;
+		case OP_LEFT_U0: tape->pos += instruction->mov; while (tape->memory[tape->pos]) (tape->pos) -= instruction->val; break;
 		case OP_IN: tape->memory[tape->pos += instruction->mov] = (cell_t) getchar(); break;
 		case OP_OUT: putchar(tape->memory[tape->pos += instruction->mov]); fflush(stdout); break;
-		case OP_LOOP_BEGIN: bf_run_loop(program, tape); break;
-		case OP_LOOP_END: return EXEC_LOOP_DONE;
+		case OP_LOOP_BEGIN: tape->pos += instruction->mov; bf_run_loop(program, tape); break;
+		case OP_LOOP_END: tape->pos += instruction->mov; return EXEC_LOOP_DONE;
 		default: return EXEC_UNKNOWN;
 	}
 
@@ -271,7 +266,7 @@ int main(int argc, char const *argv[]) {
 		exit(1);
 	}
 	if (fread(program, sizeof(char), file_size, fp) != (file_size * sizeof(char))) {
-		fprintf(stderr, "Error: could not read program %s.\n", argv[1]);
+		fprintf(stderr, "Error: could not read program from %s.\n", argv[1]);
 		free(program);
 		fclose(fp);
 		exit(1);
