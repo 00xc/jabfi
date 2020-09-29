@@ -6,7 +6,7 @@
 #define MEM_SIZE		(2<<15)
 
 /* An instruction as an operator and an operand */
-typedef enum { OP_ADD, OP_CLEAR, OP_MOVE, OP_RIGHT_U0, OP_LEFT_U0, OP_IN, OP_OUT, OP_LOOP_BEGIN, OP_LOOP_END, OP_END } operator_t;
+typedef enum { OP_ADD, OP_CLEAR, OP_MOVE, OP_RIGHT_U0, OP_LEFT_U0, OP_IN, OP_OUT, OP_LOOP_BEGIN, OP_LOOP_END, OP_END, OP_MUL } operator_t;
 typedef int32_t operand_t;
 typedef struct { operator_t op; operand_t val; operand_t mov; } instruction_t;
 
@@ -44,14 +44,17 @@ inline void bf_accumulate_instructions(const char* input, unsigned int* i, instr
 	output[(*j)++] = (instruction_t) { .op = op, .val = (--(*i) - start_pos + 1) * sign };
 }
 
-/* Counts the number of occurences of `c` in `haystack` until the end of the string or reaching `sentinel` */
+/*
+* Counts the number of occurences of `c` in `haystack` until it reaches the `sentinel` character
+* If the sentinel character is not found before the end of the string, it returns -1;
+*/
 int count_str(char c, const char* haystack, char sentinel) {
 
 	if (strchr(haystack, sentinel) == NULL)
 		return -1;
 
 	int i;
-	for (i=0; haystack[i] != sentinel; haystack[i]==c ? i++ : *haystack++);
+	for (i=0; haystack[i] != sentinel; haystack[i] == c ? i++ : *haystack++);
 	return i;
 }
 
@@ -82,6 +85,40 @@ char is_monoinstruction_loop(const char* input, unsigned int i) {
 	if (arithmetic_ops[(int)found])
 		return found;
 
+	return 0;
+}
+
+/*
+ * Returns 1 if the loop starting at `offset` is a multiplication loop. A multiplication loop sets
+ * a series of cells to a value multiplied by the current cell (mem[pos]).
+ *
+ * [->+>++>>+++<<<<] can be optimized to run in constant time:
+ * mem[pos+1] += 1 * mem[pos] => op=OP_MUL, val=1, mov=1
+ * mem[pos+2] += 2 * mem[pos] => op=OP_MUL, val=2, mov=2
+ * mem[pos+4] += 3 * mem[pos] => op=OP_MUL, val=3, mov=4
+ * mem[pos] = 0               => op=OP_CLEAR, mov=0
+ * 
+ * This is possible because the loop:
+ * 1. is balanced (has the same number of left and right moves, 4)
+ * 2. decreases by one mem[pos] on each iteration.
+ * 3. does not alter mem[pos] in any other way.
+ * Therefore it will be executed mem[pos] times.
+ */
+int is_mult_loop(instruction_t* output, int offset) {
+	operand_t balance = 0;
+	int i;
+
+	for (i=offset+1; output[i].op != OP_LOOP_END; ++i) {
+		balance += output[i].mov;
+		if (output[i].op != OP_ADD || balance < 0)
+			return 0;
+		if (balance == 0 && output[i].val != -1)
+			return 0;
+	}
+	balance += output[i].mov;
+
+	if (balance == 0)
+		return 1;
 	return 0;
 }
 
@@ -126,7 +163,7 @@ void bf_compile(const char* input, instruction_t* output) {
 	}
 	output[j++] = (instruction_t) { .op = OP_END };
 
-	/* Translate an `OP_MOVE, OP_X` sequence into a single `OP_X` with a move */
+	/* Translate each `OP_MOVE, OP_X` sequence into a single `OP_X` with a move */
 	i = j = 0;
 	instruction_t* next;
 	do {
@@ -141,7 +178,43 @@ void bf_compile(const char* input, instruction_t* output) {
 		}
 
 	} while (output[i++].op != OP_END);
+	
+	/*
+	* Transform multiplication loops into a series of OP_MUL plus an OP_CLEAR. Refer to the
+	* comment on `is_mult_loop()` for more info.
+	*/
+	i = j = 0;
+	operand_t offset;
+	do {
+		if ( output[i].op == OP_LOOP_BEGIN && is_mult_loop(output, i) ) {
+
+			/* Add an OP_MOVE if OP_LOOP_BEGIN was contracted */
+			if (output[i].mov != 0) {
+				output[j++] = (instruction_t) { .op = OP_MOVE, .val = output[i].mov };
+			}
+
+			/* Replace loop body with OP_MUL instructions */
+			for (offset=0, i+=1; output[i].op != OP_LOOP_END; ++i) {
+				offset += output[i].mov;
+				if (offset == 0) continue;
+				output[j].op = OP_MUL;
+				output[j].val = output[i].val;
+				output[j].mov = offset;
+				++j;
+			}
+
+			/* Clear the initial cell */
+			output[j].op = OP_CLEAR;
+			output[j].mov = 0;
+			++j;
+
+		} else  {
+			output[j++] = output[i];
+		}
+
+	} while (output[i++].op != OP_END);
 }
+
 
 /* Top level instruction loop */
 void bf_run_main_loop(program_t* program, tape_t* tape) {
@@ -165,10 +238,8 @@ inline void bf_run_loop(program_t* program, tape_t* tape) {
 
 		/* Loop until counter is zero, while we are not at EOF */
 		do {
-			/* Reset the program pointer */
+			/* Reset the program pointer and run the loop once */
 			program->pos = loop_beginning;
-
-			/* Run the loop once */
 			while ( (instruction = PROGRAM_NEXT(program)).op != OP_END) {
 				if (bf_run_instruction(&( (instruction_t) {instruction.op, instruction.val, instruction.mov} ), program, tape) == EXEC_LOOP_DONE)
 					break;
@@ -211,6 +282,7 @@ uint_fast8_t bf_run_instruction(const instruction_t* instruction, program_t* pro
 		case OP_LEFT_U0: tape->pos += instruction->mov; while (tape->memory[tape->pos]) (tape->pos) -= instruction->val; break;
 		case OP_IN: tape->memory[tape->pos += instruction->mov] = (cell_t) getchar(); break;
 		case OP_OUT: putchar(tape->memory[tape->pos += instruction->mov]); fflush(stdout); break;
+		case OP_MUL: tape->memory[tape->pos + instruction->mov] += instruction->val * tape->memory[tape->pos]; break;
 		case OP_LOOP_BEGIN: tape->pos += instruction->mov; bf_run_loop(program, tape); break;
 		case OP_LOOP_END: tape->pos += instruction->mov; return EXEC_LOOP_DONE;
 		default: return EXEC_UNKNOWN;
@@ -219,6 +291,7 @@ uint_fast8_t bf_run_instruction(const instruction_t* instruction, program_t* pro
 	return EXEC_OK;
 }
 
+/* Filters non-useful characters */
 void bf_filter(char* input) {
 	char* src;
 	char* dst;
