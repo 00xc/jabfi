@@ -25,10 +25,10 @@ if __name__ == "__main__":
 		"h.b": TestResult(None, "H", ""),
 		"pound_symbol.b": TestResult(None, "#", ""),
 		"squares.b": TestResult(None, "\n".join(map(str, all_squares())), ""),
-		"unmatched1.b": TestResult(None, "#", "Error: found ] @ 7 with unmatched [."),
-		"unmatched2.b": TestResult(None, "#", "Error: found [ @ 7 with unmatched ]."),
+		"unmatched1.b": TestResult(None, "", "Error: found ] with unmatched [."),
+		"unmatched2.b": TestResult(None, "", "Error: found [ with unmatched ]."),
 		"collatz.b": TestResult(b"5492280743\x0d\x0a4068834\x0d\x0a\x00", "403\n253", ""),
-		"rot13.b": TestResult(b"~mlk zyx\x00", "~zyx mlk", "")
+		"rot13.b": TestResult(b"~mlk zyx\x00", "~zyx mlk", ""),
 	}
 
 	# Retrieve test programs
