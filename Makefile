@@ -1,6 +1,8 @@
-CC=gcc
-CFLAGS=-std=c99 -Wall -Wextra -Werror -pedantic -Ofast -fstack-protector-strong -fPIE -D_FORTIFY_SOURCE=2
-DEBUG_FLAGS=-DDEBUG
+CC = gcc
+CFLAGS = -std=c99 -Wall -Wextra -Werror -pedantic -O3 -fstack-protector-strong -fPIE -D_FORTIFY_SOURCE=2
+DEBUG_FLAGS = -DDEBUG
+
+.PHONY: tests clean
 
 jabfi: jabfi.c
 	$(CC) $< $(CFLAGS) -o $@
