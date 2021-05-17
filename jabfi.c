@@ -9,18 +9,18 @@
 
 /* An instruction has an operator, a move and an operand */
 typedef enum {
-	OP_ADD,
-	OP_CLEAR,
-	OP_MOVE,
-	OP_RIGHT_U0,
-	OP_LEFT_U0,
-	OP_IN,
-	OP_OUT,
-	OP_LOOP_BEGIN,
-	OP_LOOP_END,
-	OP_END,
-	OP_MUL,
-	OP_SET
+	OP_ADD,          /* Add to the current cell */
+	OP_CLEAR,        /* Set the current cell to 0. If `.val` is not zero, set `mul_operand` to its previous value. */
+	OP_MOVE,         /* Move cell pointer left (negative value) or right (positive) */
+	OP_RIGHT_U0,     /* Move right in jumps of `.val`, until a cell with value 0 is reached */
+	OP_LEFT_U0,      /* Move left in jumps of `.val`, until a cell with value 0 is reached */
+	OP_IN,           /* Read a value from stdin and store it to the current cell */
+	OP_OUT,          /* Print the current cell as a character */
+	OP_LOOP_BEGIN,   /* Begin a loop */
+	OP_LOOP_END,     /* End a loop */
+	OP_END,          /* End the program */
+	OP_MUL,          /* Multiply `.val` by the `mul_operand` global variable, and increase the cell at the current pointer + `.mov` by the result.  */
+	OP_SET           /* Set the current cell to `.val` */
 } operator_t;
 typedef int32_t operand_t;
 typedef struct {
@@ -72,12 +72,15 @@ char* _op_to_str(operator_t operator) {
 inline instruction_t bf_accumulate_instructions(const char* input, unsigned int* i, operator_t op, short sign) {
 	unsigned int start_pos = *i;
 	char current = input[start_pos];
+	operand_t val;
 
 	while (input[++(*i)] == current) {
 		continue;
 	}
 
-	return (instruction_t) { .op = op, .val = (--(*i) - start_pos + 1) * sign };
+	/* The .mov field for the OP_MOVE operation is the same as .val */
+	val = (--(*i) - start_pos + 1) * sign;
+	return (instruction_t) { .op = op, .val = val, .mov = (op == OP_MOVE) * (val)};
 }
 
 /*
@@ -170,15 +173,15 @@ void bf_optimize_set_cell(instruction_t* input) {
 	do {
 		next = input[i + 1];
 
-		/* OP_CLEAR + OP_ADD  */
 		if (input[i].op == OP_CLEAR && next.op == OP_ADD && next.mov == 0) {
+			/* OP_CLEAR + OP_ADD  */
 			input[j].op = OP_SET;
 			input[j].val = next.val;
 			input[j].mov = input[i].mov;
 			++i;
 
-		/* OP_SET + OP_ADD  */
 		} else if (input[i].op == OP_SET && next.op == OP_ADD && next.mov == 0) {
+			/* OP_SET + OP_ADD */
 			input[j].op = OP_SET;
 			input[j].val = input[i].val + next.val;
 			input[j].mov = input[i].mov;
@@ -328,7 +331,7 @@ void bf_compile(char* input, instruction_t* output) {
 	}
 
 	/* Main IR compilation loop */
-	while (input[++i]) {
+	while (input[++i] != '\0') {
 		switch (input[i]) {
 
 			case '+': output[j++] = bf_accumulate_instructions(input, &i, OP_ADD,  1); break;
@@ -342,7 +345,7 @@ void bf_compile(char* input, instruction_t* output) {
 				if ( input[i+2] == ']' && (input[i+1] == '-' || input[i+1] == '+')) {
 
 					/* Optimized loop: clear cell ([-] or [+]) */
-					output[j++] = (instruction_t) { .op = OP_CLEAR, .val = 0 }; i+=2; break;
+					output[j++] = (instruction_t) { .op = OP_CLEAR, .val = 0 }; i += 2; break;
 
 				} else if ( (c = is_monoinstruction_loop(input + i)) != 0 && (c == '<' || c == '>') ) {
 
@@ -403,12 +406,13 @@ void bf_run_loop(program_t* restrict program, tape_t* restrict tape) {
 
 		} while (tape->memory[tape->pos += instruction->mov] != 0);
 
+
 	} else {
 
 		/* Skip to matching OP_LOOP_END */
-		register int_fast16_t loop = 1;
+		int_fast16_t loop = 1;
 		do {
-			switch ( PROGRAM_NEXT(program).op ) {
+			switch (PROGRAM_NEXT(program).op) {
 				case OP_LOOP_END: --loop; break;
 				case OP_LOOP_BEGIN: ++loop; break;
 				default: continue;
@@ -422,32 +426,31 @@ __attribute__((hot))
 #endif
 void bf_run_instruction(const instruction_t* instruction, program_t* program, tape_t* tape) {
 
+	/* Only OP_MUL does not change the cell pointer */
+	if (instruction->op != OP_MUL) {
+		tape->pos += instruction->mov;
+	}
+
 	switch(instruction->op) {
-		case OP_ADD: tape->memory[tape->pos += instruction->mov] += instruction->val; break;
-		case OP_MOVE: tape->pos += instruction->val; break;
+		case OP_ADD: tape->memory[tape->pos] += instruction->val; break;
 		case OP_CLEAR:
-			tape->pos += instruction->mov;
 			if (instruction->val != 0)
 				mul_operand = tape->memory[tape->pos];
 			tape->memory[tape->pos] = 0;
 			break;
-		case OP_RIGHT_U0: tape->pos += instruction->mov; while (tape->memory[tape->pos]) (tape->pos) += instruction->val; break;
-		case OP_LEFT_U0:  tape->pos += instruction->mov; while (tape->memory[tape->pos]) (tape->pos) -= instruction->val; break;
-		case OP_IN: tape->memory[tape->pos += instruction->mov] = (cell_t) getchar(); break;
-		case OP_OUT: putchar(tape->memory[tape->pos += instruction->mov]); break;
+		case OP_RIGHT_U0: while (tape->memory[tape->pos]) (tape->pos) += instruction->val; break;
+		case OP_LEFT_U0:  while (tape->memory[tape->pos]) (tape->pos) -= instruction->val; break;
+		case OP_IN: tape->memory[tape->pos] = (cell_t) getchar(); break;
+		case OP_OUT: putchar(tape->memory[tape->pos]); break;
+		case OP_LOOP_BEGIN: bf_run_loop(program, tape); break;
+		case OP_SET: tape->memory[tape->pos] = instruction->val; break;
 		case OP_MUL: tape->memory[tape->pos + instruction->mov] += instruction->val * mul_operand; break;
-		case OP_LOOP_BEGIN: tape->pos += instruction->mov; bf_run_loop(program, tape); break;
-		case OP_SET: tape->memory[tape->pos += instruction->mov] = instruction->val; break;
-
-		/* This instruction is executed in `bf_run_loop` to avoid an additional call to `bf_run_instruction` */
-		//case OP_LOOP_END: tape->pos += instruction->mov; return EXEC_LOOP_DONE;
-
 		default: return;
 	}
 }
 
 /* Filters non-useful characters */
-void bf_filter(char* input) {
+size_t bf_filter(char* input) {
 	char ops[256] = { ['.'] = 1, [','] = 1, ['+'] = 1, ['-'] = 1, ['<'] = 1, ['>'] = 1, ['['] = 1, [']'] = 1 };
 	char* src;
 	char* dst;
@@ -458,66 +461,68 @@ void bf_filter(char* input) {
 		}
 	}
 	*dst = 0;
+
+	return dst - input;
 }
 
-int main(int argc, const char* argv[]) {
+void bf_read_file(const char* filename, char** out) {
 	FILE* fp;
-	char* program;
 	size_t file_size;
+	char* buf;
 
-	if (argc < 2) {
-		fprintf(stderr, "Usage: %s program_file.b\n", argv[0]);
-		exit(EXIT_SUCCESS);
-	}
-
-	/* Open file */
-	fp = fopen(argv[1], "r");
-	if (fp == NULL) {
-		err(EXIT_FAILURE, "Could not open %s", argv[1]);
-	}
+	fp = fopen(filename, "r");
+	if (fp == NULL)
+		err(EXIT_FAILURE, "Could not open %s", filename);
 
 	/* Get file size */
 	fseek(fp, 0, SEEK_END);
 	file_size = ftell(fp);
 	fseek(fp, 0, SEEK_SET);
 
-	/* Allocate initial buffer and read program */
-	program = calloc(file_size + 2, sizeof(char));
-	if (program == NULL) {
+	buf = calloc(file_size + 1, sizeof(char));
+	if (buf == NULL) {
 		fclose(fp);
 		err(EXIT_FAILURE, "calloc");
 	}
-	if (fread(program, sizeof(char), file_size, fp) != file_size) {
-		free(program);
+
+	if (fread(buf, sizeof(char), file_size, fp) != file_size) {
+		free(buf);
 		fclose(fp);
-		err(EXIT_FAILURE, "Could not read program from %s", argv[1]);
+		err(EXIT_FAILURE, "fread");
 	}
 	fclose(fp);
 
-	/* Filter the characters in the input buffer */
-	bf_filter(program);
+	*out = buf;
+}
 
-	/* Allocate buffer for compiled program */
-	program_t compiled_program = {
-		.code = malloc(file_size * sizeof(instruction_t)),
-		.pos = 0
-	};
-	if (compiled_program.code == NULL) {
-		free(program);
-		err(EXIT_FAILURE, "malloc");
+int main(int argc, const char* argv[]) {
+	char* buf;
+	size_t num_bytes;
+	tape_t tape;
+	program_t program;
+
+	if (argc < 2)
+		errx(EXIT_SUCCESS, "Usage: %s program_file.b", argv[0]);
+
+	/* Read file and filter out unneccessary characters */
+	bf_read_file(argv[1], &buf);
+	num_bytes = bf_filter(buf);
+
+	/* Prepare compiled program and tape */
+	program.pos = 0;
+	program.code = calloc(num_bytes + 1, sizeof(instruction_t));
+	if (program.code == NULL) {
+		free(buf);
+		err(EXIT_FAILURE, "calloc");
 	}
 
-	/* Translate program to a set of IR instructions */
-	bf_compile(program, compiled_program.code);
-	free(program);
+	/* Compile and run */
+	bf_compile(buf, program.code);
+	memset(&tape, 0, sizeof(tape_t));
+	bf_run_main_loop(&program, &tape);
 
-	/* Init memory */
-	tape_t tape = { .pos = 0 };
-	memset(tape.memory, 0, MEM_SIZE * sizeof(cell_t));
-
-	/* Run program */
-	bf_run_main_loop(&compiled_program, &tape);
-	free(compiled_program.code);
+	free(buf);
+	free(program.code);
 
 	return EXIT_SUCCESS;
 }

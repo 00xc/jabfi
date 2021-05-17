@@ -1,6 +1,6 @@
 CC = gcc
-CFLAGS = -std=c99 -Wall -Wextra -Werror -pedantic -O3 -fstack-protector-strong -fPIE -D_FORTIFY_SOURCE=2
-DEBUG_FLAGS = -DDEBUG
+CFLAGS = -std=c99 -Wall -Wextra -Werror -pedantic -O3 -funroll-loops -fstack-protector-strong -fPIE -D_FORTIFY_SOURCE=2
+DEBUG_FLAGS = -DDEBUG -g
 
 .PHONY: tests clean
 
